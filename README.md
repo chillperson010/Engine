@@ -34,6 +34,7 @@ to make it surpass the baseline.
 |--------|----------------------|-----|
 | Positional eval terms (mobility, bishop pair, passed pawns, rook files, pawn structure) | +43 −24 =33 | **≈ +67** |
 | King safety | +42 −41 =57 | ≈ +2 (neutral in fast self-play; expected to help at real time controls / vs humans) |
+| **Lazy SMP: 4 threads vs 1** (200 ms/move) | +29 −6 =25 | **≈ +140** |
 | Human NNUE as hybrid correction (regularized) | +17 −24 =19 | ≈ −41 (not a clear win → kept opt-in) |
 
 (Elo via `tools/sprt/match_engines.py` / `match.py`. Estimated absolute strength
@@ -61,7 +62,8 @@ UCI options:
 - `Hash` (MiB) — transposition table size.
 - `EvalFile` — path to a `.nnue` network (M3). Without one, the engine uses its
   hand-crafted evaluation.
-- `UseNNUE`, `Threads` — accepted; single-threaded search in M1.
+- `Threads` — Lazy SMP worker count (1–256; default 1).
+- `UseNNUE` — accepted (the NNUE loads via `EvalFile`).
 
 ## Verify
 
@@ -70,13 +72,14 @@ UCI options:
 ./build/titled-nnue bench 12  # fixed-depth node/nps signature
 ```
 
-## Search features (M1)
+## Search features
 
 Bitboard move generation (vendored [chess-library](https://github.com/Disservin/chess-library)),
 iterative deepening with PVS, transposition table, null-move pruning, late move
-reductions, reverse-futility / futility / late-move pruning, quiescence with
-delta pruning, MVV-LVA + killer + history move ordering, check extensions,
-aspiration windows, mate-distance pruning, and UCI time management.
+reductions, reverse-futility / futility / late-move pruning, quiescence with SEE
++ delta pruning, SEE-based capture ordering, MVV-LVA + killer + history move
+ordering, check extensions, aspiration windows, mate-distance pruning, UCI time
+management, and **Lazy SMP** multithreading.
 
 ## Training data policy
 
