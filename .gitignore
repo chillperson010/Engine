@@ -1,0 +1,29 @@
+# Build artifacts
+/build/
+*.o
+*.obj
+*.exe
+
+# Large data / training artifacts (kept out of git; see data/ and docs/SCALE_UP.md)
+/data/raw/
+/data/work/
+*.pgn
+*.pgn.zst
+*.binpack
+*.bin
+
+# Trained networks are large; commit only the small demonstrator explicitly.
+/training/nnue-pytorch/.venv/
+/training/checkpoints/
+*.ckpt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+*.swp
+compile_commands.json
