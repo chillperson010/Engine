@@ -13,6 +13,7 @@ struct SearchLimits {
     int     depth = 0;          // fixed depth (0 == unlimited)
     uint64_t nodes = 0;         // node cap (0 == unlimited)
     bool    infinite = false;   // search until "stop"
+    int     human_style = 0;    // 0 = pure strength; >0 = prefer human moves within a margin
 };
 
 // Compute a soft time budget (ms) for this move. side: 0 white, 1 black.

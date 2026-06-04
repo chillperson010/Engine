@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "eval.h"
+#include "policy.h"
 #include "see.h"
 #include "tt.h"
 
@@ -278,6 +279,39 @@ static std::string score_to_uci(Value v) {
     return "cp " + std::to_string(v);
 }
 
+// Explicit root search used only for the human-style pass: scores every root
+// move (exact_all -> full window, no sibling cutoffs) so we can compare them.
+// Relies on a warm TT (filled by the main search) to stay cheap.
+Value Searcher::root_search(Board& b, int depth, Value alpha, Value beta, bool exact_all) {
+    Value best = -VALUE_INF;
+    pv_len_[0] = 0;
+    int i = 0;
+    for (auto& m : root_moves_) {
+        b.makeMove(m);
+        Value score;
+        if (i == 0 || exact_all) {
+            score = -search(b, depth - 1, 1, -beta, -alpha, false);
+        } else {
+            score = -search(b, depth - 1, 1, -alpha - 1, -alpha, true);
+            if (score > alpha && score < beta)
+                score = -search(b, depth - 1, 1, -beta, -alpha, false);
+        }
+        b.unmakeMove(m);
+        root_scores_[i] = score;
+        if (score > best) {
+            best = score;
+            pv_table_[0][0] = m.move();
+            int clen = pv_len_[1];
+            for (int k = 0; k < clen; ++k) pv_table_[0][k + 1] = pv_table_[1][k];
+            pv_len_[0] = clen + 1;
+        }
+        if (!exact_all && score > alpha) alpha = score;
+        ++i;
+        if (i >= 256 || stop_->load(std::memory_order_relaxed)) break;
+    }
+    return best;
+}
+
 chess::Move Searcher::think(Board board, const SearchLimits& limits) {
     own_stop_.store(false);
     stop_ = &own_stop_;
@@ -302,12 +336,12 @@ chess::Move Searcher::run(Board board, const SearchLimits& limits) {
     std::fill(&killers_[0][0], &killers_[0][0] + sizeof(killers_) / sizeof(uint16_t), 0);
 
     // Fallback: first legal move, in case we get stopped before depth 1 finishes.
-    Movelist root_moves;
-    movegen::legalmoves(root_moves, board);
-    Move best = root_moves.empty() ? Move() : root_moves[0];
+    movegen::legalmoves(root_moves_, board);
+    Move best = root_moves_.empty() ? Move() : root_moves_[0];
 
     int max_depth = limits.depth ? std::min(limits.depth, MAX_PLY) : MAX_PLY;
     Value prev = VALUE_NONE;
+    int completed_depth = 0;
 
     for (int depth = 1; depth <= max_depth; ++depth) {
         Value alpha = -VALUE_INF, beta = VALUE_INF;
@@ -342,6 +376,7 @@ chess::Move Searcher::run(Board board, const SearchLimits& limits) {
 
         if (pv_len_[0] > 0) best = Move(pv_table_[0][0]);
         prev = score;
+        completed_depth = depth;
 
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start_).count();
         uint64_t nps = ms > 0 ? (nodes_ * 1000 / ms) : nodes_;
@@ -363,6 +398,41 @@ chess::Move Searcher::run(Board board, const SearchLimits& limits) {
         if (aborted) break;
         // If we have spent most of our soft budget, don't start another iteration.
         if (soft_time_ms_ > 0 && ms * 100 >= soft_time_ms_ * 55) break;
+    }
+
+    // Human-style pass: among root moves within a centipawn margin of the best,
+    // play the one a titled human would most likely choose. Uses a cheap pass
+    // over the (warm) TT with time/stop disabled so scores are reliable.
+    if (limits_.human_style > 0 && policy::is_loaded() && root_moves_.size() > 1 &&
+        completed_depth >= 1) {
+        soft_time_ms_ = 0;
+        limits_.nodes = 0;
+        std::atomic<bool> nostop{false};
+        std::atomic<bool>* saved = stop_;
+        stop_ = &nostop;
+
+        int hd = std::max(2, std::min(completed_depth, 10));
+        root_search(board, hd, -VALUE_INF, VALUE_INF, true);
+
+        Value bestS = -VALUE_INF;
+        int nmoves = static_cast<int>(root_moves_.size());
+        for (int i = 0; i < nmoves; ++i) bestS = std::max(bestS, root_scores_[i]);
+
+        int margin = limits_.human_style * 2;   // cp tolerance traded for human style
+        policy::Eval pe;
+        policy::compute(board, pe);
+        float best_human = -1e30f;
+        Move chosen = best;
+        for (int i = 0; i < nmoves; ++i) {
+            if (root_scores_[i] >= bestS - margin && !is_mate_score(bestS)) {
+                float h = policy::move_score(board, pe, root_moves_[i]);
+                if (h > best_human) { best_human = h; chosen = root_moves_[i]; }
+            }
+        }
+        best = chosen;
+        stop_ = saved;
+        if (report_)
+            std::cout << "info string human-style pick " << uci::moveToUci(best) << "\n" << std::flush;
     }
 
     return best;

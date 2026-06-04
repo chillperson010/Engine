@@ -37,9 +37,13 @@ private:
 
     Value search(chess::Board& b, int depth, int ply, Value alpha, Value beta, bool cut_node);
     Value qsearch(chess::Board& b, int ply, Value alpha, Value beta);
+    Value root_search(chess::Board& b, int depth, Value alpha, Value beta, bool exact_all);
 
     void score_moves(const chess::Board& b, chess::Movelist& moves, uint16_t tt_move, int ply);
     bool time_up();
+
+    chess::Movelist root_moves_{};
+    Value root_scores_[256] = {};
 
     SearchLimits limits_{};
     int64_t soft_time_ms_ = 0;

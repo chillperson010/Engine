@@ -6,6 +6,7 @@
 #include "../third_party/chess-library/chess.hpp"
 #include "eval.h"
 #include "nnue/nnue.h"
+#include "policy.h"
 #include "search.h"
 #include "timeman.h"
 
@@ -22,7 +23,9 @@ Board g_board;          // current position
 std::thread g_thread;   // active search thread
 size_t g_hash_mb = 16;
 int g_threads = 1;      // Lazy SMP worker count
+int g_human_style = 0;  // 0 = pure strength; >0 = human-style move preference
 std::string g_eval_file = "<none>";
+std::string g_human_file = "<none>";
 
 void join_search() {
     if (g_thread.joinable()) g_thread.join();
@@ -40,6 +43,8 @@ void cmd_uci() {
     std::cout << "option name Threads type spin default 1 min 1 max 256\n";
     std::cout << "option name UseNNUE type check default true\n";
     std::cout << "option name EvalFile type string default <none>\n";
+    std::cout << "option name HumanStyle type spin default 0 min 0 max 100\n";
+    std::cout << "option name HumanFile type string default <none>\n";
     std::cout << "uciok\n" << std::flush;
 }
 
@@ -61,6 +66,16 @@ void cmd_setoption(std::istringstream& is) {
         g_searcher.resize_tt(g_hash_mb);
     } else if (name == "Threads") {
         g_threads = std::max(1, std::min(256, std::stoi(value)));
+    } else if (name == "HumanStyle") {
+        g_human_style = std::max(0, std::min(100, std::stoi(value)));
+    } else if (name == "HumanFile") {
+        g_human_file = value;
+        if (value != "<none>" && !value.empty()) {
+            if (eng::policy::load(value))
+                std::cout << "info string loaded human policy " << value << "\n" << std::flush;
+            else
+                std::cout << "info string failed to load human policy " << value << "\n" << std::flush;
+        }
     } else if (name == "EvalFile") {
         g_eval_file = value;
         if (value != "<none>" && !value.empty()) {
@@ -117,6 +132,7 @@ SearchLimits parse_go(std::istringstream& is) {
 void cmd_go(std::istringstream& is) {
     stop_search();  // ensure no previous search is running
     SearchLimits lim = parse_go(is);
+    lim.human_style = g_human_style;
     Board board = g_board;  // search on a copy
     int threads = g_threads;
     eng::clear_stop();      // clear synchronously before launching (avoids go/stop race)
