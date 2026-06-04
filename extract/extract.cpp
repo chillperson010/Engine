@@ -38,6 +38,7 @@ struct Config {
     int max_per_game = 20;
     uint64_t max_games = 0;
     std::string manifest;
+    bool policy = false;   // emit "FEN\t<uci_move>" (human move) instead of WDL labels
 };
 
 struct Stats {
@@ -105,6 +106,22 @@ public:
         }
         if (m == Move::NO_MOVE) { broken_ = true; skipPgn(true); return; }
 
+        // Policy mode: record (position-before-move, human move) for move-prediction
+        // training. Sampling is based on the ply about to be played.
+        if (cfg_.policy) {
+            int next_ply = plies_ + 1;
+            bool sample = next_ply > cfg_.skip_plies && emitted_ < cfg_.max_per_game &&
+                          (next_ply - cfg_.skip_plies) % cfg_.sample_every == 0 && !board_.inCheck();
+            if (sample) {
+                out_ << board_.getFen() << '\t' << uci::moveToUci(m) << '\n';
+                ++emitted_;
+                ++stats_.positions;
+            }
+            board_.makeMove(m);
+            ++plies_;
+            return;
+        }
+
         board_.makeMove(m);
         ++plies_;
 
@@ -156,6 +173,7 @@ Config parse_args(int argc, char** argv) {
         else if (a == "--sample-every") c.sample_every = std::max(1, std::stoi(next()));
         else if (a == "--max-per-game") c.max_per_game = std::stoi(next());
         else if (a == "--max-games") c.max_games = std::stoull(next());
+        else if (a == "--policy") c.policy = true;
         else if (a == "--manifest") c.manifest = next();
         else {
             std::cerr << "extract: unknown flag '" << a << "'\n";
