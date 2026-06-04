@@ -145,6 +145,74 @@ static const int eg_king[64] = {
 static const int* mg_tables[6] = {mg_pawn, mg_knight, mg_bishop, mg_rook, mg_queen, mg_king};
 static const int* eg_tables[6] = {eg_pawn, eg_knight, eg_bishop, eg_rook, eg_queen, eg_king};
 
+// White-relative positional terms layered on top of material+PST: mobility,
+// bishop pair, rook files, and pawn structure (passed/doubled/isolated). These
+// are standard, sign-stable eval features that improve quiet-position judgement.
+static int eval_extras(const Board& b) {
+    int s = 0;
+    const Bitboard occ = b.occ();
+
+    if (b.pieces(PieceType::BISHOP, Color::WHITE).count() >= 2) s += 25;
+    if (b.pieces(PieceType::BISHOP, Color::BLACK).count() >= 2) s -= 25;
+
+    auto mobility = [&](Color c) -> int {
+        int m = 0;
+        const Bitboard own = b.us(c);
+        for (Bitboard n = b.pieces(PieceType::KNIGHT, c); !n.empty(); n.clear(n.lsb()))
+            m += (attacks::knight(Square(n.lsb())) & ~own).count() * 4;
+        for (Bitboard bi = b.pieces(PieceType::BISHOP, c); !bi.empty(); bi.clear(bi.lsb()))
+            m += (attacks::bishop(Square(bi.lsb()), occ) & ~own).count() * 3;
+        for (Bitboard r = b.pieces(PieceType::ROOK, c); !r.empty(); r.clear(r.lsb()))
+            m += (attacks::rook(Square(r.lsb()), occ) & ~own).count() * 2;
+        for (Bitboard q = b.pieces(PieceType::QUEEN, c); !q.empty(); q.clear(q.lsb()))
+            m += (attacks::queen(Square(q.lsb()), occ) & ~own).count();
+        return m;
+    };
+    s += mobility(Color::WHITE) - mobility(Color::BLACK);
+
+    const uint64_t wp = b.pieces(PieceType::PAWN, Color::WHITE).getBits();
+    const uint64_t bp = b.pieces(PieceType::PAWN, Color::BLACK).getBits();
+    const uint64_t wr = b.pieces(PieceType::ROOK, Color::WHITE).getBits();
+    const uint64_t br = b.pieces(PieceType::ROOK, Color::BLACK).getBits();
+    static const int PASSED[8] = {0, 8, 14, 24, 40, 66, 100, 0};  // by squares advanced
+
+    for (int f = 0; f < 8; ++f) {
+        const uint64_t file = 0x0101010101010101ULL << f;
+        const uint64_t adj = ((f > 0) ? (file >> 1) : 0ULL) | ((f < 7) ? (file << 1) : 0ULL);
+        int wc = __builtin_popcountll(wp & file);
+        int bc = __builtin_popcountll(bp & file);
+        if (wc > 1) s -= 12 * (wc - 1);                 // doubled
+        if (bc > 1) s += 12 * (bc - 1);
+        if (wc > 0 && (wp & adj) == 0) s -= 12;          // isolated
+        if (bc > 0 && (bp & adj) == 0) s += 12;
+        // Rook on open / semi-open file.
+        if (wr & file) s += ((wp & file) == 0) ? (((bp & file) == 0) ? 18 : 9) : 0;
+        if (br & file) s -= ((bp & file) == 0) ? (((wp & file) == 0) ? 18 : 9) : 0;
+    }
+
+    // Passed pawns.
+    for (uint64_t x = wp; x; x &= x - 1) {
+        int sq = __builtin_ctzll(x), f = sq & 7, r = sq >> 3;
+        uint64_t front = 0;
+        for (int rr = r + 1; rr < 8; ++rr) front |= 0xFFULL << (rr * 8);
+        uint64_t files = (0x0101010101010101ULL << f) |
+                         ((f > 0) ? (0x0101010101010101ULL << (f - 1)) : 0) |
+                         ((f < 7) ? (0x0101010101010101ULL << (f + 1)) : 0);
+        if ((bp & front & files) == 0) s += PASSED[r];
+    }
+    for (uint64_t x = bp; x; x &= x - 1) {
+        int sq = __builtin_ctzll(x), f = sq & 7, r = sq >> 3;
+        uint64_t front = 0;
+        for (int rr = r - 1; rr >= 0; --rr) front |= 0xFFULL << (rr * 8);
+        uint64_t files = (0x0101010101010101ULL << f) |
+                         ((f > 0) ? (0x0101010101010101ULL << (f - 1)) : 0) |
+                         ((f < 7) ? (0x0101010101010101ULL << (f + 1)) : 0);
+        if ((wp & front & files) == 0) s -= PASSED[7 - r];
+    }
+
+    return s;
+}
+
 Value evaluate_hce(const Board& board) {
     int mg[2] = {0, 0};
     int eg[2] = {0, 0};
@@ -173,6 +241,10 @@ Value evaluate_hce(const Board& board) {
     // Taper between middlegame and endgame (max phase == 24).
     if (phase > 24) phase = 24;
     int score = (mg_score * phase + eg_score * (24 - phase)) / 24;
+
+    // Positional terms (computed White-relative) folded in from the stm view.
+    int extras = eval_extras(board);
+    score += (side == 0) ? extras : -extras;
 
     // Small tempo bonus for the side to move.
     score += 12;

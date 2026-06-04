@@ -15,9 +15,18 @@ engine/cheater play never enters the training signal.
 | Milestone | What | State |
 |-----------|------|-------|
 | **M1** | Working UCI engine + hand-crafted (PeSTO) eval, passes perft | ✅ done |
-| **M2** | Data pipeline: download → filter titled-vs-titled → labeled positions | ⏳ |
-| **M3** | NNUE training (pure human WDL targets) + C++ SIMD inference | ⏳ |
-| **M4** | Strength testing (SPRT), packaging, scale-up docs | ⏳ |
+| **M2** | Data pipeline: download → filter titled-vs-titled → labeled positions | ✅ done |
+| **M3** | NNUE training (pure human WDL targets) + C++ inference (exact parity) | ✅ done |
+| **M4** | Strength work (SEE, richer eval), SPRT harness, scale-up docs | ✅ done |
+
+**Strength note (honest):** the engine is strongest on its classical search +
+hand-crafted evaluation, which improves with SEE-ordered search and positional
+terms (mobility, bishop pair, passed pawns, rook files, pawn structure). The
+human-only NNUE is fully wired and verified, but a pure-WDL net trained only on
+(materially balanced) titled-human games under-learns material and is
+off-distribution for search nodes, so it is used as an opt-in positional
+*correction* (`EvalFile`), not the default. See `docs/SCALE_UP.md` for the path
+to make it surpass the baseline.
 
 ## Build
 
