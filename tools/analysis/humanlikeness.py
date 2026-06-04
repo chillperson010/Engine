@@ -34,7 +34,12 @@ OPENINGS = [
 
 
 def cp(score, pov):
-    return score.pov(pov).score(mate_score=100000)
+    # Cap mate scores so they don't dominate; per-move CPL is clamped below too,
+    # the way Lichess/chess.com bound centipawn loss.
+    return score.pov(pov).score(mate_score=2000)
+
+
+CPL_CAP = 1000  # ignore "loss" beyond this on any single move (decided positions)
 
 
 def analyze_game_moves(board_moves, analyzer, depth):
@@ -51,7 +56,7 @@ def analyze_game_moves(board_moves, analyzer, depth):
         info2 = analyzer.analyse(board, chess.engine.Limit(depth=depth))
         played_cp = cp(info2["score"], pov)  # same pov as the mover
         board.pop()
-        cpl_sum += max(0, best_cp - played_cp)
+        cpl_sum += min(CPL_CAP, max(0, best_cp - played_cp))
         matches += (mv == best)
         n += 1
     return matches, n, cpl_sum
