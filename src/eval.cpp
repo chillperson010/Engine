@@ -1,5 +1,7 @@
 #include "eval.h"
 
+#include <algorithm>
+
 #include "nnue/nnue.h"
 
 using namespace chess;
@@ -169,6 +171,35 @@ static int eval_extras(const Board& b) {
         return m;
     };
     s += mobility(Color::WHITE) - mobility(Color::BLACK);
+
+    // King safety: penalise the king whose surrounding zone is attacked by enemy
+    // pieces (weighted by piece type, and only meaningfully when several pieces
+    // join the attack). Scaled down in the endgame, where the king is a fighter.
+    auto king_danger = [&](Color c) -> int {
+        Square ksq = b.kingSq(c);
+        Bitboard zone = attacks::king(ksq) | Bitboard::fromSquare(ksq);
+        Color e = ~c;
+        int attackers = 0, weight = 0;
+        auto tally = [&](Bitboard att, int w) {
+            if (!(att & zone).empty()) { ++attackers; weight += w; }
+        };
+        for (Bitboard n = b.pieces(PieceType::KNIGHT, e); !n.empty(); n.clear(n.lsb()))
+            tally(attacks::knight(Square(n.lsb())), 2);
+        for (Bitboard bi = b.pieces(PieceType::BISHOP, e); !bi.empty(); bi.clear(bi.lsb()))
+            tally(attacks::bishop(Square(bi.lsb()), occ), 2);
+        for (Bitboard r = b.pieces(PieceType::ROOK, e); !r.empty(); r.clear(r.lsb()))
+            tally(attacks::rook(Square(r.lsb()), occ), 3);
+        for (Bitboard q = b.pieces(PieceType::QUEEN, e); !q.empty(); q.clear(q.lsb()))
+            tally(attacks::queen(Square(q.lsb()), occ), 5);
+        return (attackers >= 2) ? std::min(weight * weight, 300) : 0;  // quadratic, capped
+    };
+    // Phase weight: enemy non-pawn material (caps at ~queen+2 pieces -> /16).
+    auto npm = [&](Color c) {
+        return b.pieces(PieceType::KNIGHT, c).count() + b.pieces(PieceType::BISHOP, c).count() +
+               2 * b.pieces(PieceType::ROOK, c).count() + 4 * b.pieces(PieceType::QUEEN, c).count();
+    };
+    s -= king_danger(Color::WHITE) * std::min(npm(Color::BLACK), 16) / 16;
+    s += king_danger(Color::BLACK) * std::min(npm(Color::WHITE), 16) / 16;
 
     const uint64_t wp = b.pieces(PieceType::PAWN, Color::WHITE).getBits();
     const uint64_t bp = b.pieces(PieceType::PAWN, Color::BLACK).getBits();
