@@ -36,3 +36,12 @@ target_link_libraries(titled-nnue PRIVATE Threads::Threads)
 target_include_directories(titled-nnue PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/chess-library
 )
+
+# Data-extraction tool: PGN -> filtered, WDL-labeled training positions.
+add_executable(extract
+  extract/extract.cpp
+  extract/filter.cpp
+)
+target_include_directories(extract PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/chess-library
+)
