@@ -28,6 +28,18 @@ off-distribution for search nodes, so it is used as an opt-in positional
 *correction* (`EvalFile`), not the default. See `docs/SCALE_UP.md` for the path
 to make it surpass the baseline.
 
+## Measured results (node-limited self-play A/B, this build)
+
+| Change | Result vs prior build | Elo |
+|--------|----------------------|-----|
+| Positional eval terms (mobility, bishop pair, passed pawns, rook files, pawn structure) | +43 −24 =33 | **≈ +67** |
+| King safety | +42 −41 =57 | ≈ +2 (neutral in fast self-play; expected to help at real time controls / vs humans) |
+| Human NNUE as hybrid correction (regularized) | +17 −24 =19 | ≈ −41 (not a clear win → kept opt-in) |
+
+(Elo via `tools/sprt/match_engines.py` / `match.py`. Estimated absolute strength
+~2300–2600 on engine rating scales; not yet measured against a calibrated
+opponent.)
+
 ## Build
 
 ```bash

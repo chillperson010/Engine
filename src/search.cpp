@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
+#include <memory>
+#include <thread>
+#include <vector>
 
 #include "eval.h"
 #include "see.h"
@@ -44,7 +47,7 @@ void Searcher::clear() {
 }
 
 bool Searcher::time_up() {
-    if (stop_.load(std::memory_order_relaxed)) return true;
+    if (stop_->load(std::memory_order_relaxed)) return true;
     if (limits_.nodes && nodes_ >= limits_.nodes) return true;
     if (soft_time_ms_ > 0) {
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start_).count();
@@ -113,7 +116,7 @@ Value Searcher::qsearch(Board& b, int ply, Value alpha, Value beta) {
         Value score = -qsearch(b, ply + 1, -beta, -alpha);
         b.unmakeMove(m);
 
-        if (stop_.load(std::memory_order_relaxed)) return 0;
+        if (stop_->load(std::memory_order_relaxed)) return 0;
         if (score > best) {
             best = score;
             if (score > alpha) alpha = score;
@@ -174,7 +177,7 @@ Value Searcher::search(Board& b, int depth, int ply, Value alpha, Value beta, bo
             b.makeNullMove();
             Value null_score = -search(b, depth - R, ply + 1, -beta, -beta + 1, !cut_node);
             b.unmakeNullMove();
-            if (stop_.load(std::memory_order_relaxed)) return 0;
+            if (stop_->load(std::memory_order_relaxed)) return 0;
             if (null_score >= beta) return is_mate_score(null_score) ? beta : null_score;
         }
     }
@@ -231,7 +234,7 @@ Value Searcher::search(Board& b, int depth, int ply, Value alpha, Value beta, bo
         }
         b.unmakeMove(m);
 
-        if (stop_.load(std::memory_order_relaxed)) return 0;
+        if (stop_->load(std::memory_order_relaxed)) return 0;
 
         if (score > best) {
             best = score;
@@ -276,13 +279,19 @@ static std::string score_to_uci(Value v) {
 }
 
 chess::Move Searcher::think(Board board, const SearchLimits& limits) {
+    own_stop_.store(false);
+    stop_ = &own_stop_;
+    report_ = true;
+    TT.new_search();
+    return run(std::move(board), limits);
+}
+
+chess::Move Searcher::run(Board board, const SearchLimits& limits) {
     limits_ = limits;
-    stop_.store(false);
     nodes_ = 0;
     sel_depth_ = 0;
     start_ = Clock::now();
     side_ = static_cast<int>(board.sideToMove());
-    TT.new_search();
 
     soft_time_ms_ = (limits.infinite || limits.depth || limits.nodes) ? 0 : compute_move_time(limits, side_);
 
@@ -342,11 +351,13 @@ chess::Move Searcher::think(Board board, const SearchLimits& limits) {
             if (i) pv += ' ';
             pv += uci::moveToUci(Move(pv_table_[0][i]));
         }
-        std::cout << "info depth " << depth << " seldepth " << sel_depth_
-                  << " score " << score_to_uci(score) << " nodes " << nodes_ << " nps " << nps
-                  << " hashfull " << TT.hashfull() << " time " << ms;
-        if (!pv.empty()) std::cout << " pv " << pv;
-        std::cout << "\n" << std::flush;
+        if (report_) {
+            std::cout << "info depth " << depth << " seldepth " << sel_depth_
+                      << " score " << score_to_uci(score) << " nodes " << nodes_ << " nps " << nps
+                      << " hashfull " << TT.hashfull() << " time " << ms;
+            if (!pv.empty()) std::cout << " pv " << pv;
+            std::cout << "\n" << std::flush;
+        }
 
         if (is_mate_score(score) && depth >= 2 * ((VALUE_MATE - std::abs(score) + 1) / 2)) break;
         if (aborted) break;
@@ -354,6 +365,48 @@ chess::Move Searcher::think(Board board, const SearchLimits& limits) {
         if (soft_time_ms_ > 0 && ms * 100 >= soft_time_ms_ * 55) break;
     }
 
+    return best;
+}
+
+// ---- Lazy SMP coordinator -------------------------------------------------
+
+static std::atomic<bool> g_shared_stop{false};
+
+void request_stop() { g_shared_stop.store(true, std::memory_order_relaxed); }
+
+// Cleared by the UCI thread before launching a search, so a "stop" arriving
+// right after "go" can't be clobbered by the coordinator resetting it.
+void clear_stop() { g_shared_stop.store(false, std::memory_order_relaxed); }
+
+chess::Move search_best(const Board& board, const SearchLimits& limits, int threads) {
+    if (threads < 1) threads = 1;
+    TT.new_search();
+
+    std::vector<std::unique_ptr<Searcher>> pool;
+    for (int i = 0; i < threads; ++i) {
+        auto s = std::make_unique<Searcher>();
+        s->set_shared_stop(&g_shared_stop);
+        s->set_report(i == 0);
+        pool.push_back(std::move(s));
+    }
+
+    // Helper threads deepen "infinitely" until the shared stop is set; only the
+    // main thread manages time and prints info. All share the global TT.
+    SearchLimits helper = limits;
+    helper.infinite = true;
+    helper.movetime = 0;
+    helper.depth = 0;
+    helper.nodes = 0;
+
+    std::vector<std::thread> ts;
+    for (int i = 1; i < threads; ++i) {
+        Searcher* w = pool[i].get();
+        ts.emplace_back([w, board, helper]() mutable { w->run(board, helper); });
+    }
+
+    Move best = pool[0]->run(board, limits);          // main: time-managed + reporting
+    g_shared_stop.store(true, std::memory_order_relaxed);
+    for (auto& t : ts) t.join();
     return best;
 }
 

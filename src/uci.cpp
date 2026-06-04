@@ -21,6 +21,7 @@ const std::string ENGINE_AUTHOR = "chillperson010";
 Board g_board;          // current position
 std::thread g_thread;   // active search thread
 size_t g_hash_mb = 16;
+int g_threads = 1;      // Lazy SMP worker count
 std::string g_eval_file = "<none>";
 
 void join_search() {
@@ -28,7 +29,7 @@ void join_search() {
 }
 
 void stop_search() {
-    g_searcher.stop();
+    eng::request_stop();
     join_search();
 }
 
@@ -36,7 +37,7 @@ void cmd_uci() {
     std::cout << "id name " << ENGINE_NAME << " " << ENGINE_VERSION << "\n";
     std::cout << "id author " << ENGINE_AUTHOR << "\n";
     std::cout << "option name Hash type spin default 16 min 1 max 65536\n";
-    std::cout << "option name Threads type spin default 1 min 1 max 1\n";
+    std::cout << "option name Threads type spin default 1 min 1 max 256\n";
     std::cout << "option name UseNNUE type check default true\n";
     std::cout << "option name EvalFile type string default <none>\n";
     std::cout << "uciok\n" << std::flush;
@@ -58,6 +59,8 @@ void cmd_setoption(std::istringstream& is) {
     if (name == "Hash") {
         g_hash_mb = std::max<size_t>(1, std::stoul(value));
         g_searcher.resize_tt(g_hash_mb);
+    } else if (name == "Threads") {
+        g_threads = std::max(1, std::min(256, std::stoi(value)));
     } else if (name == "EvalFile") {
         g_eval_file = value;
         if (value != "<none>" && !value.empty()) {
@@ -68,7 +71,7 @@ void cmd_setoption(std::istringstream& is) {
                           << " (using hand-crafted eval)\n" << std::flush;
         }
     }
-    // Threads / UseNNUE accepted but not acted on in M1.
+    // UseNNUE accepted but not acted on (NNUE loads via EvalFile).
 }
 
 // Apply "position [startpos | fen <fen>] [moves m1 m2 ...]".
@@ -115,8 +118,10 @@ void cmd_go(std::istringstream& is) {
     stop_search();  // ensure no previous search is running
     SearchLimits lim = parse_go(is);
     Board board = g_board;  // search on a copy
-    g_thread = std::thread([board, lim]() mutable {
-        Move best = g_searcher.think(board, lim);
+    int threads = g_threads;
+    eng::clear_stop();      // clear synchronously before launching (avoids go/stop race)
+    g_thread = std::thread([board, lim, threads]() mutable {
+        Move best = eng::search_best(board, lim, threads);
         std::cout << "bestmove " << uci::moveToUci(best) << "\n" << std::flush;
     });
 }

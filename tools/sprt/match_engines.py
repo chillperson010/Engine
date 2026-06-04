@@ -33,9 +33,8 @@ def elo(score, n):
     return e, (-400 * math.log10(1 / hi - 1) - (-400 * math.log10(1 / lo - 1))) / 2
 
 
-def play(a, b, fen, a_white, nodes, max_plies=240):
+def play(a, b, fen, a_white, lim, max_plies=240):
     board = chess.Board(fen)
-    lim = chess.engine.Limit(nodes=nodes)
     while not board.is_game_over(claim_draw=True) and board.ply() < max_plies:
         eng = a if ((board.turn == chess.WHITE) == a_white) else b
         mv = eng.play(board, lim).move
@@ -56,17 +55,22 @@ def main():
     ap.add_argument("--b", required=True)
     ap.add_argument("--games", type=int, default=200)
     ap.add_argument("--nodes", type=int, default=60000)
+    ap.add_argument("--movetime", type=int, default=0, help="ms per move (overrides --nodes)")
+    ap.add_argument("--a-threads", type=int, default=1)
+    ap.add_argument("--b-threads", type=int, default=1)
     args = ap.parse_args()
 
     a = chess.engine.SimpleEngine.popen_uci(args.a)
     b = chess.engine.SimpleEngine.popen_uci(args.b)
-    a.configure({"Hash": 32})
-    b.configure({"Hash": 32})
+    a.configure({"Hash": 64, "Threads": args.a_threads})
+    b.configure({"Hash": 64, "Threads": args.b_threads})
+    lim = (chess.engine.Limit(time=args.movetime / 1000.0) if args.movetime
+           else chess.engine.Limit(nodes=args.nodes))
     w = l = d = 0
     try:
         for g in range(args.games):
             fen = OPENINGS[(g // 2) % len(OPENINGS)]
-            s = play(a, b, fen, g % 2 == 0, args.nodes)
+            s = play(a, b, fen, g % 2 == 0, lim)
             w += s == 1.0
             l += s == 0.0
             d += s == 0.5
