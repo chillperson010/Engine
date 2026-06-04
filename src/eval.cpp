@@ -180,7 +180,13 @@ Value evaluate_hce(const Board& board) {
 }
 
 Value evaluate(const Board& board) {
-    if (nnue::is_loaded()) return nnue::evaluate(board);
+    // Hybrid eval: a material/PST baseline (axioms, trained on no games at all)
+    // plus the human-trained NNUE as a positional correction. Titled-human games
+    // are materially balanced, so a pure-WDL net under-learns material; anchoring
+    // it to material keeps the engine strong while the learned component — trained
+    // only on human titled games — supplies positional judgement. The NNUE's own
+    // SCALE controls how large that correction is.
+    if (nnue::is_loaded()) return evaluate_hce(board) + nnue::evaluate(board);
     return evaluate_hce(board);
 }
 

@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "eval.h"
+#include "see.h"
 #include "tt.h"
 
 using namespace chess;
@@ -63,10 +64,12 @@ void Searcher::score_moves(const Board& b, Movelist& moves, uint16_t tt_move, in
         } else if (is_capture(b, m)) {
             int victim = (m.typeOf() == Move::ENPASSANT) ? 100 : piece_val(b, m.to());
             int attacker = piece_val(b, m.from());
-            s = 10000 + victim * 8 - attacker;          // MVV-LVA
+            int mvv = victim * 8 - attacker;            // MVV-LVA
+            // Winning/equal captures on top; losing captures (SEE<0) below quiets.
+            s = see_ge(b, m, 0) ? (16000 + mvv) : (-12000 + mvv);
             if (m.typeOf() == Move::PROMOTION) s += 2000;
         } else if (m.typeOf() == Move::PROMOTION) {
-            s = 9000 + static_cast<int>(m.promotionType());
+            s = 15000 + static_cast<int>(m.promotionType());
         } else if (m.move() == killers_[ply][0]) {
             s = 8000;
         } else if (m.move() == killers_[ply][1]) {
@@ -98,6 +101,10 @@ Value Searcher::qsearch(Board& b, int ply, Value alpha, Value beta) {
 
     Value best = stand;
     for (const auto& m : caps) {
+        // Captures are SEE-ordered; once we reach losing captures (negative
+        // score) the rest are losing too, so stop searching them in quiescence.
+        if (m.score() < 0) break;
+
         // Delta pruning: skip captures that cannot raise alpha even optimistically.
         int gain = (m.typeOf() == Move::ENPASSANT) ? 100 : piece_val(b, m.to());
         if (stand + gain + 200 < alpha && m.typeOf() != Move::PROMOTION) continue;

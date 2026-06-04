@@ -25,6 +25,7 @@ add_executable(titled-nnue
   src/main.cpp
   src/uci.cpp
   src/search.cpp
+  src/see.cpp
   src/eval.cpp
   src/tt.cpp
   src/nnue/nnue.cpp

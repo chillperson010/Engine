@@ -5,12 +5,29 @@
 #include <vector>
 
 #include "../third_party/chess-library/chess.hpp"
+#include "nnue/nnue.h"
 #include "search.h"
 #include "timeman.h"
 
 using namespace chess;
 
 int uci_loop();
+
+// Load a network and print the NNUE eval for each FEN read on stdin
+// ("<fen>\t<eval_cp>"). Used to cross-check C++ inference vs the trainer.
+static int run_evalfen(const std::string& net) {
+    if (!eng::nnue::load(net)) {
+        std::cerr << "evalfen: failed to load network " << net << "\n";
+        return 1;
+    }
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (line.empty()) continue;
+        Board b(line);
+        std::cout << line << "\t" << eng::nnue::evaluate(b) << "\n";
+    }
+    return 0;
+}
 
 // ---- perft (move-generation correctness) ----------------------------------
 
@@ -101,6 +118,7 @@ int main(int argc, char** argv) {
             int d = (argc > 2) ? std::stoi(argv[2]) : 11;
             return run_bench(d);
         }
+        if (mode == "evalfen" && argc > 2) return run_evalfen(argv[2]);
     }
     return uci_loop();
 }
